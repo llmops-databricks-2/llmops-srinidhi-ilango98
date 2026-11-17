@@ -8,6 +8,8 @@ from plant_care.config import ProjectConfig
 
 SKIP_TAGS = {"script", "style"}
 BLOCK_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "tr", "blockquote", "pre"}
+CELL_TAGS = {"td", "th"}
+CELL_SEPARATOR = ": "
 
 BLOCK_SCHEMA = ArrayType(StructType([StructField("tag", StringType()), StructField("text", StringType())]))
 PARSED_SCHEMA = StructType(
@@ -15,6 +17,18 @@ PARSED_SCHEMA = StructType(
         StructField("slug", StringType(), False),
         StructField("url", StringType(), True),
         StructField("blocks", BLOCK_SCHEMA, True),
+    ]
+)
+
+HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+CHUNK_SCHEMA = StructType(
+    [
+        StructField("chunk_id", StringType(), False),
+        StructField("slug", StringType(), False),
+        StructField("url", StringType(), True),
+        StructField("section", StringType(), True),
+        StructField("tag", StringType(), True),
+        StructField("text", StringType(), True),
     ]
 )
 
@@ -35,6 +49,8 @@ class _ArticleParser(HTMLParser):
         elif tag in BLOCK_TAGS:
             self._flush()
             self._tag = tag
+        elif tag in CELL_TAGS and self._tag == "tr" and "".join(self._parts).strip():
+            self._parts = ["".join(self._parts).rstrip(), CELL_SEPARATOR]
 
     def handle_endtag(self, tag: str) -> None:
         if tag in SKIP_TAGS:
@@ -77,6 +93,7 @@ class DataProcessor:
         self.cfg = config
         self.plant_table = f"{config.catalog}.{config.schema}.plant_care"
         self.parsed_table = f"{config.catalog}.{config.schema}.plant_care_parsed"
+        self.chunks_table = f"{config.catalog}.{config.schema}.plant_care_chunks"
 
     @staticmethod
     def parse_html(html: str) -> list[tuple[str, str]]:
@@ -123,3 +140,68 @@ class DataProcessor:
             parsed_df.write.format("delta").mode("overwrite").saveAsTable(self.parsed_table)
             logger.info(f"Saved parsed articles to {self.parsed_table}")
         return parsed_df
+
+    @staticmethod
+    def chunk_blocks(slug: str, blocks: list[tuple[str, str]]) -> list[tuple[str, str, str, str]]:
+        """
+        Turn one article's blocks into chunks, one per non-heading block.
+
+        Headings are merged into the body block that follows them, so the chunk text
+        starts with its heading. Table rows that are not merged with a heading get the
+        current section prefixed, so every row carries its section. Each chunk's section
+        is the most recent heading. Headings at the end of an article with no body after
+        them become their own chunk.
+
+        chunk_id is the position of the block in the article, counting headings too, so
+        the IDs skip the heading positions. For example, an article whose blocks are
+        h2, p, p, h3, p gives IDs _1, _2, _4. The IDs are unique and stable, but not contiguous.
+
+        Args:
+            slug: Plant slug, used as the prefix of each chunk_id
+            blocks: (tag, text) tuples in document order
+
+        Returns:
+            List of (chunk_id, section, tag, text) tuples
+        """
+        chunks = []
+        section = ""
+        pending: list[str] = []
+        heading_tag = ""
+        for index, (tag, text) in enumerate(blocks):
+            if tag in HEADING_TAGS:
+                section = text
+                pending.append(text)
+                heading_tag = tag
+                continue
+            if tag == "tr" and not pending and section:
+                text = f"{section}: {text}"
+            chunks.append((f"{slug}_{index}", section, tag, ": ".join([*pending, text])))
+            pending = []
+        if pending:
+            chunks.append((f"{slug}_{len(blocks)}", section, heading_tag, ": ".join(pending)))
+        return chunks
+
+    def chunk_all_articles(self, save_table: bool = True) -> DataFrame:
+        """
+        Chunk every parsed article, optionally saving the result to the plant_care_chunks table.
+
+        Args:
+            save_table: Whether to overwrite the plant_care_chunks table with the result
+
+        Returns:
+            DataFrame with one row per chunk
+        """
+        rows = self.spark.table(self.parsed_table).select("slug", "url", "blocks").collect()
+
+        chunks = []
+        for row in rows:
+            blocks = [(block["tag"], block["text"]) for block in row["blocks"] or []]
+            for chunk_id, section, tag, text in self.chunk_blocks(row["slug"], blocks):
+                chunks.append((chunk_id, row["slug"], row["url"], section, tag, text))
+
+        logger.info(f"Created {len(chunks)} chunks from {len(rows)} articles")
+        chunks_df = self.spark.createDataFrame(chunks, schema=CHUNK_SCHEMA)
+        if save_table:
+            chunks_df.write.format("delta").mode("overwrite").saveAsTable(self.chunks_table)
+            logger.info(f"Saved chunks to {self.chunks_table}")
+        return chunks_df
