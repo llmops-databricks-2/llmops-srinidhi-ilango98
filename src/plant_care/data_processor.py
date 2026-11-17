@@ -21,6 +21,7 @@ PARSED_SCHEMA = StructType(
 )
 
 HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+MAX_LIST_CHARS = 500
 CHUNK_SCHEMA = StructType(
     [
         StructField("chunk_id", StringType(), False),
@@ -147,14 +148,16 @@ class DataProcessor:
         Turn one article's blocks into chunks, one per non-heading block.
 
         Headings are merged into the body block that follows them, so the chunk text
-        starts with its heading. Table rows that are not merged with a heading get the
-        current section prefixed, so every row carries its section. Each chunk's section
-        is the most recent heading. Headings at the end of an article with no body after
-        them become their own chunk.
+        starts with its heading. Consecutive list items (li) in the same section are
+        merged into one chunk, joined with "; ", up to MAX_LIST_CHARS characters. Table
+        rows that are not merged with a heading get the current section prefixed, so
+        every row carries its section. Each chunk's section is the most recent heading.
+        Headings at the end of an article with no body after them become their own chunk.
 
         chunk_id is the position of the block in the article, counting headings too, so
         the IDs skip the heading positions. For example, an article whose blocks are
-        h2, p, p, h3, p gives IDs _1, _2, _4. The IDs are unique and stable, but not contiguous.
+        h2, p, p, h3, p gives IDs _1, _2, _4. For a merged list chunk, the ID is the
+        position of its first item. The IDs are unique and stable, but not contiguous.
 
         Args:
             slug: Plant slug, used as the prefix of each chunk_id
@@ -167,16 +170,33 @@ class DataProcessor:
         section = ""
         pending: list[str] = []
         heading_tag = ""
+        items: list[tuple[int, str]] = []
+
+        def flush_items() -> None:
+            if items:
+                chunks.append((f"{slug}_{items[0][0]}", section, "li", "; ".join(t for _, t in items)))
+                items.clear()
+
         for index, (tag, text) in enumerate(blocks):
             if tag in HEADING_TAGS:
+                flush_items()
                 section = text
                 pending.append(text)
                 heading_tag = tag
                 continue
+            if tag == "li":
+                text = ": ".join([*pending, text])
+                pending = []
+                if items and len("; ".join([*(t for _, t in items), text])) > MAX_LIST_CHARS:
+                    flush_items()
+                items.append((index, text))
+                continue
+            flush_items()
             if tag == "tr" and not pending and section:
                 text = f"{section}: {text}"
             chunks.append((f"{slug}_{index}", section, tag, ": ".join([*pending, text])))
             pending = []
+        flush_items()
         if pending:
             chunks.append((f"{slug}_{len(blocks)}", section, heading_tag, ": ".join(pending)))
         return chunks
