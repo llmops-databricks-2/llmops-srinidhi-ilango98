@@ -213,13 +213,22 @@ class PlantCarePgVectorManager:
                     count += len(batch)
         return count
 
-    def index_delta_chunks(self) -> int:
-        """Embed all rows of the Delta plant_care_chunks table and upsert them into Lakebase."""
+    def index_delta_chunks(self, refresh: bool = False) -> int:
+        """Embed and upsert the Delta plant_care_chunks rows into Lakebase.
+
+        If the table already has rows and refresh is False, nothing is embedded and 0 is returned.
+        """
         if self.spark is None:
             raise ValueError("A SparkSession is required to index Delta chunks")
         from pyspark.sql import functions as F
 
         self.ensure_schema()
+        if not refresh:
+            with self.connection() as conn:
+                existing = conn.execute(f"SELECT EXISTS (SELECT 1 FROM {self.table_name})").fetchone()[0]
+            if existing:
+                logger.info(f"{self.table_name} already populated; skipping embedding (pass refresh=True to rebuild)")
+                return 0
         source_table = f"{self.config.catalog}.{self.config.schema}.{self.source_table_name}"
         source = self.spark.table(source_table)
         typed_fields = [*TYPED_TEXT_FIELDS, *TYPED_BOOL_FIELDS]
