@@ -230,7 +230,9 @@ class DataProcessor:
         ]
         logger.info(f"Created {len(chunks)} chunks from {len(rows)} articles")
 
-        plants_df = self.spark.table(self.plant_table).drop("summary", "url", "volume_path", "ingestion_timestamp")
+        plants_df = self.spark.table(self.plant_table).drop(
+            "summary", "url", "volume_path", "ingestion_timestamp", "published_at", "updated_at"
+        )
         chunks_df = self.spark.createDataFrame(chunks, schema=CHUNK_SCHEMA).join(plants_df, "slug", "left")
         if save_table:
             self._save(chunks_df, self.chunks_table)
