@@ -28,7 +28,6 @@ CHUNK_SCHEMA = StructType(
         StructField("slug", StringType(), False),
         StructField("url", StringType(), True),
         StructField("section", StringType(), True),
-        StructField("tag", StringType(), True),
         StructField("text", StringType(), True),
     ]
 )
@@ -168,20 +167,19 @@ class DataProcessor:
             blocks: (tag, text) tuples in document order
 
         Returns:
-            List of (chunk_id, slug, url, section, tag, text) tuples matching CHUNK_SCHEMA
+            List of (chunk_id, slug, url, section, text) tuples matching CHUNK_SCHEMA
         """
         chunks = []
         section = ""
         heading = ""
-        heading_tag = ""
         items: list[tuple[int, str]] = []
 
-        def add(chunk_id: str, tag: str, text: str) -> None:
-            chunks.append((chunk_id, slug, url, section, tag, text))
+        def add(chunk_id: str, text: str) -> None:
+            chunks.append((chunk_id, slug, url, section, text))
 
         def flush_items() -> None:
             if items:
-                add(f"{slug}_{items[0][0]}", "li", "; ".join(t for _, t in items))
+                add(f"{slug}_{items[0][0]}", "; ".join(t for _, t in items))
                 items.clear()
 
         for index, (tag, text) in enumerate(blocks):
@@ -189,7 +187,6 @@ class DataProcessor:
                 flush_items()
                 section = text
                 heading = _join(heading, text)
-                heading_tag = tag
             elif tag == "li":
                 text = _join(heading, text)
                 heading = ""
@@ -199,11 +196,11 @@ class DataProcessor:
             else:
                 flush_items()
                 prefix = heading or (section if tag == "tr" else "")
-                add(f"{slug}_{index}", tag, _join(prefix, text))
+                add(f"{slug}_{index}", _join(prefix, text))
                 heading = ""
         flush_items()
         if heading:
-            add(f"{slug}_{len(blocks)}", heading_tag, heading)
+            add(f"{slug}_{len(blocks)}", heading)
         return chunks
 
     def chunk_all_articles(self, save_table: bool = True) -> DataFrame:
