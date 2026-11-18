@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import urllib.parse
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
@@ -18,6 +19,11 @@ if TYPE_CHECKING:
 
 EMBEDDING_DIMENSION = 1024
 CHUNK_SOURCE_COLUMNS = {"chunk_id", "slug", "url", "section", "text"}
+
+
+def _query_terms(query: str) -> list[str]:
+    """Split a query into distinct lowercase words."""
+    return list(dict.fromkeys(re.findall(r"\w+", query.lower())))
 TYPED_TEXT_FIELDS = ["category", "difficulty", "family"]
 TYPED_BOOL_FIELDS = ["pet_safe_cat", "pet_safe_dog"]
 ALLOWED_FILTERS = {"slug", "tags", *TYPED_TEXT_FIELDS, *TYPED_BOOL_FIELDS}
@@ -315,15 +321,20 @@ class PlantCarePgVectorManager:
         filters: dict[str, Any] | None = None,
         vector_weight: float = 0.7,
     ) -> list[dict[str, Any]]:
-        """Combine cosine similarity and PostgreSQL full-text ranking."""
+        """Combine cosine similarity with the fraction of query terms each chunk contains."""
         query_vector = self._vector_literal(self.embed_query(query))
         where, filter_params = self._filters(filters)
+        terms = _query_terms(query)
         sql = f"""
             WITH ranked AS (
                 SELECT id, slug, url, section, tags, text, category, difficulty, family,
                        pet_safe_cat, pet_safe_dog, metadata,
                        1 - (embedding <=> %s::vector) AS vector_score,
-                       ts_rank_cd(search_vector, plainto_tsquery('english', %s)) AS text_score
+                       (
+                           SELECT count(*)::float
+                           FROM unnest(%s::text[]) AS term
+                           WHERE search_vector @@ to_tsquery('english', term)
+                       ) / %s AS text_score
                 FROM {self.table_name}
                 {where}
             )
@@ -334,7 +345,8 @@ class PlantCarePgVectorManager:
         """
         params = [
             query_vector,
-            query,
+            terms,
+            max(len(terms), 1),
             *filter_params,
             vector_weight,
             1.0 - vector_weight,
