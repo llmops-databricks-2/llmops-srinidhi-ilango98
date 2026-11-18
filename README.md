@@ -109,9 +109,8 @@ Each environment logs to its own MLflow experiment and UC trace tables in its ma
 
 ## Plant care pipeline
 
-The plant care data pipeline lives in `src/plant_care/` and is driven by four notebooks in
-`notebooks/`, run in order. Each loads `project_config.yml` one level up, so run them from the
-`notebooks/` folder.
+The pipeline code lives in `src/plant_care/`. Run the four notebooks in `notebooks/` in order,
+from that folder.
 
 | Notebook | Class and method | Writes |
 |---|---|---|
@@ -120,40 +119,23 @@ The plant care data pipeline lives in `src/plant_care/` and is driven by four no
 | `2.2_articles_chunking.ipynb` | `DataProcessor.chunk_all_articles` | `plant_care_chunks` table |
 | `2.3_embeddings_vector_search.ipynb` | `PlantCarePgVectorManager`: `ensure_schema`, `index_delta_chunks`, `search`, `hybrid_search` | `plant_care_embeddings` table in Lakebase (pgvector) |
 
-Notes for working on this pipeline:
+Notes:
 
-- **Source data:** 143 plants from the PlantSolve index. About 25 have no article, so their
-  `volume_path` is NULL. The articles that exist are saved to the volume.
-- **Overwrites:** `save_table=True` replaces the table and its schema on every run. Pass `False` to compute
-  without writing.
+- **Source:** 143 plants; about 25 have no article, so their `volume_path` is NULL.
+- **Overwrites:** `save_table=True` replaces the table on every run. `False` computes without
+  writing.
 - **Stale input:** chunking reads `plant_care_parsed`, not the HTML. After changing the parser,
-  re-run 2.1 before 2.2. Chunk-only changes need only 2.2.
-- **Parsing:** `parse_html` uses the standard library `html.parser`, so there are no extra
-  dependencies. It keeps the text of `h1`–`h6`, `p`, `li`, `tr`, `blockquote`, and `pre` as
-  `(tag, text)` blocks. It skips `script` and `style`.
-- **Chunking rules:** one chunk per block, with these exceptions:
-  - A heading merges into the body block after it as `"Heading: body"`.
-  - Consecutive `li` items in one section merge with `"; "`, up to 500 characters.
-  - Table cells are joined with `": "`. A `tr` with no merged heading gets `"Section: row"`.
-  - `chunk_id` is `{slug}_{index}`. Indexes count headings too, so IDs are unique but not
-    contiguous.
-- **Chunk metadata:** each chunk carries the `plant_care` columns of its plant, joined on `slug`,
-  except `summary`, `volume_path`, `ingestion_timestamp`, `published_at` and `updated_at`. The `url` comes from the chunk itself.
-- **Known structure loss:** table column headers are not tied to their cells, long lists are
-  split across chunks, link `href`s are dropped, and `section` keeps only the nearest heading.
-  The 16 `text` chunks are article introductions and banners, and they are kept.
-- **Last run** (118 articles): 1644 chunks, 30 to 1210 characters, average 354. Re-check these
-  numbers after a re-run, since they go stale.
-- **Embeddings (2.3):** `index_delta_chunks` embeds each chunk with `ai_query` on
-  `embedding_endpoint` and upserts it into Lakebase, keyed on `id`. It enables the `vector`
-  extension and creates the table and indexes on first run. If the table already has rows, it
-  skips embedding; pass `refresh=True` to re-embed every chunk. Requires `lakebase_instance` in
-  `project_config.yml`.
-- **Search:** `search` ranks by cosine similarity, with whitelisted metadata filters: `slug`,
-  `tags`, `category`, `difficulty`, `family`, `pet_safe_cat`, `pet_safe_dog`. Unknown keys raise
-  `ValueError`. `hybrid_search` scores each chunk as 0.7 × cosine similarity + 0.3 × the fraction
-  of distinct query words the chunk contains.
-
-Notebook `2.2_articles_chunking.ipynb` documents the chunking strategy and checks each loss against
-the data. Read it before changing the chunking logic.
-
+  re-run 2.1, then 2.2.
+- **Chunking:** one chunk per block, with headings merged into the body after them and list items
+  merged up to 500 characters. `chunk_id` is `{slug}_{index}`. `2.2_articles_chunking.ipynb` has
+  the details.
+- **Known loss:** table headers are not tied to their cells, long lists split across chunks, and
+  link `href`s are dropped.
+- **Chunk metadata:** each chunk carries its plant's `plant_care` columns, joined on `slug`.
+- **Embeddings (2.3):** `index_delta_chunks` embeds chunks with `ai_query` on `embedding_endpoint`
+  and upserts them into Lakebase. It skips embedding if the table already has rows; `refresh=True`
+  re-embeds. Requires `lakebase_instance` in `project_config.yml`.
+- **Search:** `search` ranks by cosine similarity with whitelisted filters (`slug`, `tags`,
+  `category`, `difficulty`, `family`, `pet_safe_cat`, `pet_safe_dog`); unknown keys raise
+  `ValueError`. `hybrid_search` scores 0.7 × cosine similarity + 0.3 × the fraction of distinct
+  query words matched.
