@@ -74,6 +74,7 @@ management access and OAuth Postgres roles with database administration privileg
 carries your usage policy and student cost tag. Its initial compute range is 0.5–2 CU, with
 suspension after five idle minutes. Creating extra branches or computes can increase its cost.
 
+
 ## What is in the repo
 
 - `src/arxiv_curator/`: starts with `config.py`, which loads `project_config.yml`.
@@ -105,3 +106,36 @@ databricks bundle validate -t dev
 ```
 
 Each environment logs to its own MLflow experiment and UC trace tables in its matching catalog. You can manage the dev experiment and write dev traces; acc and prd are read-only for you. Each deploy service principal manages its own environment’s experiment and writes to that environment’s schema.
+
+## Plant care pipeline
+
+The pipeline code lives in `src/plant_care/`. Run the four notebooks in `notebooks/` in order,
+from that folder.
+
+| Notebook | Class and method | Writes |
+|---|---|---|
+| `1_care_data_ingestion.ipynb` | `DataIngestor`: `fetch_plant_care`, `create_dataframe`, `save_article` | `plant_care` table; article HTML in `/Volumes/<catalog>/<schema>/<volume>/articles/` |
+| `2.1_articles_parsing.ipynb` | `DataProcessor.parse_all_articles` | `plant_care_parsed` table |
+| `2.2_articles_chunking.ipynb` | `DataProcessor.chunk_all_articles` | `plant_care_chunks` table |
+| `2.3_embeddings_vector_search.ipynb` | `PlantCarePgVectorManager`: `ensure_schema`, `index_delta_chunks`, `search`, `hybrid_search` | `plant_care_embeddings` table in Lakebase (pgvector) |
+
+Notes:
+
+- **Source:** 143 plants; about 25 have no article, so their `volume_path` is NULL.
+- **Overwrites:** `save_table=True` replaces the table on every run. `False` computes without
+  writing.
+- **Stale input:** chunking reads `plant_care_parsed`, not the HTML. After changing the parser,
+  re-run 2.1, then 2.2.
+- **Chunking:** one chunk per block, with headings merged into the body after them and list items
+  merged up to 500 characters. `chunk_id` is `{slug}_{index}`. `2.2_articles_chunking.ipynb` has
+  the details.
+- **Known loss:** table headers are not tied to their cells, long lists split across chunks, and
+  link `href`s are dropped.
+- **Chunk metadata:** each chunk carries its plant's `plant_care` columns, joined on `slug`.
+- **Embeddings (2.3):** `index_delta_chunks` embeds chunks with `ai_query` on `embedding_endpoint`
+  and upserts them into Lakebase. It skips embedding if the table already has rows; `refresh=True`
+  re-embeds. Requires `lakebase_instance` in `project_config.yml`.
+- **Search:** `search` ranks by cosine similarity with whitelisted filters (`slug`, `tags`,
+  `category`, `difficulty`, `family`, `pet_safe_cat`, `pet_safe_dog`); unknown keys raise
+  `ValueError`. `hybrid_search` scores 0.7 × cosine similarity + 0.3 × the fraction of distinct
+  query words matched.

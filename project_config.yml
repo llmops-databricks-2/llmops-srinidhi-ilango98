@@ -13,7 +13,7 @@ usage_policy_id: "f253db73-fd96-3a6e-8b18-0c1abd6c55c0"
 dev:
   catalog: "llmops_dev"
   schema: "srinidhi_ilango98"
-  volume: "arxiv_files"
+  volume: "plant_care"
   llm_endpoint: "course_ops.gateway.chat"
   embedding_endpoint: "databricks-gte-large-en"
   embedding_service: "course_ops.gateway.embed"
@@ -26,7 +26,7 @@ dev:
 acc:
   catalog: "llmops_acc"
   schema: "srinidhi_ilango98"
-  volume: "arxiv_files"
+  volume: "plant_care"
   llm_endpoint: "course_ops.gateway.chat"
   embedding_endpoint: "databricks-gte-large-en"
   embedding_service: "course_ops.gateway.embed"
@@ -39,7 +39,7 @@ acc:
 prd:
   catalog: "llmops_prd"
   schema: "srinidhi_ilango98"
-  volume: "arxiv_files"
+  volume: "plant_care"
   llm_endpoint: "course_ops.gateway.chat"
   embedding_endpoint: "databricks-gte-large-en"
   embedding_service: "course_ops.gateway.embed"
