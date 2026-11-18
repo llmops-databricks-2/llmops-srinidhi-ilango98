@@ -14,10 +14,9 @@
 
 from datetime import UTC, datetime
 
+from arxiv_curator.config import load_config
 from databricks.sdk.runtime import dbutils
 from pyspark.sql import SparkSession
-
-from arxiv_curator.config import load_config
 
 # The environment comes from the job's base parameters; "dev" when run by hand.
 dbutils.widgets.text("env", "dev")

@@ -24,6 +24,8 @@ CHUNK_SOURCE_COLUMNS = {"chunk_id", "slug", "url", "section", "text"}
 def _query_terms(query: str) -> list[str]:
     """Split a query into distinct lowercase words."""
     return list(dict.fromkeys(re.findall(r"\w+", query.lower())))
+
+
 TYPED_TEXT_FIELDS = ["category", "difficulty", "family"]
 TYPED_BOOL_FIELDS = ["pet_safe_cat", "pet_safe_dog"]
 ALLOWED_FILTERS = {"slug", "tags", *TYPED_TEXT_FIELDS, *TYPED_BOOL_FIELDS}
@@ -83,9 +85,7 @@ class PlantCarePgVectorManager:
         client_id = os.environ.get("DATABRICKS_CLIENT_ID")
         username = urllib.parse.quote_plus(client_id or workspace.current_user.me().user_name)
 
-        self._connection_string = (
-            f"postgresql://{username}:{credential.token}@{host}:5432/{database}?sslmode=require"
-        )
+        self._connection_string = f"postgresql://{username}:{credential.token}@{host}:5432/{database}?sslmode=require"
         return self._connection_string
 
     def connection(self) -> psycopg.Connection:
@@ -189,34 +189,33 @@ class PlantCarePgVectorManager:
                 updated_at = CURRENT_TIMESTAMP
         """
         count = 0
-        with self.connection() as conn:
-            with conn.cursor() as cursor:
-                batch: list[tuple[Any, ...]] = []
-                for row in rows:
-                    batch.append(
-                        (
-                            row["id"],
-                            row["slug"],
-                            row.get("url"),
-                            row.get("section"),
-                            row.get("tags"),
-                            row.get("category"),
-                            row.get("difficulty"),
-                            row.get("family"),
-                            row.get("pet_safe_cat"),
-                            row.get("pet_safe_dog"),
-                            row.get("metadata"),
-                            row["text"],
-                            self._vector_literal(row["embedding"]),
-                        )
+        with self.connection() as conn, conn.cursor() as cursor:
+            batch: list[tuple[Any, ...]] = []
+            for row in rows:
+                batch.append(
+                    (
+                        row["id"],
+                        row["slug"],
+                        row.get("url"),
+                        row.get("section"),
+                        row.get("tags"),
+                        row.get("category"),
+                        row.get("difficulty"),
+                        row.get("family"),
+                        row.get("pet_safe_cat"),
+                        row.get("pet_safe_dog"),
+                        row.get("metadata"),
+                        row["text"],
+                        self._vector_literal(row["embedding"]),
                     )
-                    if len(batch) >= 100:
-                        cursor.executemany(insert_sql, batch)
-                        count += len(batch)
-                        batch.clear()
-                if batch:
+                )
+                if len(batch) >= 100:
                     cursor.executemany(insert_sql, batch)
                     count += len(batch)
+                    batch.clear()
+            if batch:
+                cursor.executemany(insert_sql, batch)
+                count += len(batch)
         return count
 
     def index_delta_chunks(self, refresh: bool = False) -> int:
@@ -238,9 +237,7 @@ class PlantCarePgVectorManager:
         source_table = f"{self.config.catalog}.{self.config.schema}.{self.source_table_name}"
         source = self.spark.table(source_table)
         typed_fields = [*TYPED_TEXT_FIELDS, *TYPED_BOOL_FIELDS]
-        metadata_fields = [
-            c for c in source.columns if c not in CHUNK_SOURCE_COLUMNS | set(typed_fields) | {"tags"}
-        ]
+        metadata_fields = [c for c in source.columns if c not in CHUNK_SOURCE_COLUMNS | set(typed_fields) | {"tags"}]
         chunks = source.select(
             F.col("chunk_id").alias("id"),
             "slug",
@@ -280,19 +277,16 @@ class PlantCarePgVectorManager:
         unknown = set(filters) - ALLOWED_FILTERS
         if unknown:
             raise ValueError(f"Unsupported filters: {sorted(unknown)}")
-        clauses = [
-            "%s = ANY(tags)" if column == "tags" else f"{column} = %s" for column in filters
-        ]
+        clauses = ["%s = ANY(tags)" if column == "tags" else f"{column} = %s" for column in filters]
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         return where, list(filters.values())
 
     def _fetch(self, sql: str, params: list[Any]) -> list[dict[str, Any]]:
-        with self.connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(sql, params)
-                rows = cursor.fetchall()
-                columns = [description.name for description in cursor.description]
-        return [dict(zip(columns, row)) for row in rows]
+        with self.connection() as conn, conn.cursor() as cursor:
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+            columns = [description.name for description in cursor.description]
+        return [dict(zip(columns, row, strict=True)) for row in rows]
 
     def search(
         self,

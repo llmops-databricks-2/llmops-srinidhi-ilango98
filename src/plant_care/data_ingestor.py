@@ -1,5 +1,5 @@
-"""
-PlantSolve API
+"""PlantSolve API ingestion pipeline.
+
    ↓ (fetch_plant_care)
 Plant profiles flattened into care fields
    ↓ (save_article)
@@ -68,8 +68,7 @@ PLANT_SCHEMA = StructType(
 
 
 def _section(data: dict, key: str) -> dict:
-    """
-    Get a nested section of a profile, defaulting to an empty dict.
+    """Get a nested section of a profile, defaulting to an empty dict.
 
     Args:
         data: Dictionary containing the section
@@ -77,13 +76,13 @@ def _section(data: dict, key: str) -> dict:
 
     Returns:
         The section dictionary, or an empty dict if it is missing or null
+
     """
     return data.get(key) or {}
 
 
 def _recommended(parameters: dict, key: str) -> str | None:
-    """
-    Get the recommended value of a care parameter.
+    """Get the recommended value of a care parameter.
 
     Args:
         parameters: Parameters section of a plant profile
@@ -91,13 +90,15 @@ def _recommended(parameters: dict, key: str) -> str | None:
 
     Returns:
         Recommended value, or None if the parameter is missing
+
     """
     return _section(parameters, key).get("recommended")
 
 
 class DataIngestor:
-    """
-    DataIngestor handles the ingestion workflow of:
+    """DataIngestor handles the ingestion workflow.
+
+    It performs these steps:
     - Fetching the plant index and each plant profile from PlantSolve
     - Flattening profiles into structured care fields
     - Saving article HTML to the Volume
@@ -105,12 +106,12 @@ class DataIngestor:
     """
 
     def __init__(self, spark: SparkSession, config: ProjectConfig) -> None:
-        """
-        Initialize DataIngestor with a Spark session and configuration.
+        """Initialize DataIngestor with a Spark session and configuration.
 
         Args:
             spark: Active SparkSession
             config: ProjectConfig object with catalog, schema, and volume
+
         """
         self.spark = spark
         self.cfg = config
@@ -118,21 +119,20 @@ class DataIngestor:
         os.makedirs(self.article_dir, exist_ok=True)
 
     def _get_json(self, url: str) -> dict | list:
-        """
-        Fetch a URL and decode its JSON body.
+        """Fetch a URL and decode its JSON body.
 
         Args:
             url: URL of the JSON resource
 
         Returns:
             Decoded JSON object or array
+
         """
         with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response:
             return json.loads(response.read().decode("utf-8"))
 
     def save_article(self, slug: str, html: str | None) -> str | None:
-        """
-        Save a plant's article HTML to the Volume.
+        """Save a plant's article HTML to the Volume.
 
         Args:
             slug: Plant slug, used as the file name
@@ -140,6 +140,7 @@ class DataIngestor:
 
         Returns:
             Volume path of the saved file, or None if the profile has no article
+
         """
         if not html:
             return None
@@ -149,14 +150,14 @@ class DataIngestor:
         return path
 
     def parse_plant_profile(self, profile: dict) -> dict:
-        """
-        Flatten a PlantSolve plant profile into structured care fields.
+        """Flatten a PlantSolve plant profile into structured care fields.
 
         Args:
             profile: Raw plant profile from the PlantSolve detail endpoint
 
         Returns:
             Flat dictionary of plant care fields
+
         """
         care = _section(profile, "care")
         taxonomy = _section(profile, "taxonomy")
@@ -196,13 +197,13 @@ class DataIngestor:
         }
 
     def fetch_plant_care(self) -> list[dict]:
-        """
-        Fetch all plant care profiles from the PlantSolve API and save their articles.
+        """Fetch all plant care profiles from the PlantSolve API and save their articles.
 
         Plants whose profile fails to download are logged and skipped.
 
         Returns:
             List of structured plant care dictionaries, each with a volume_path
+
         """
         index = self._get_json(f"{BASE_URL}/index.json")
         logger.info(f"Found {len(index)} plants in PlantSolve index")
@@ -222,13 +223,13 @@ class DataIngestor:
         return plants
 
     def create_dataframe(self, plants: list[dict]) -> DataFrame:
-        """
-        Create a Spark DataFrame from the flattened plant care records.
+        """Create a Spark DataFrame from the flattened plant care records.
 
         Args:
             plants: List of plant care dictionaries from fetch_plant_care
 
         Returns:
             DataFrame with the plant_care schema
+
         """
         return self.spark.createDataFrame(plants, schema=PLANT_SCHEMA)

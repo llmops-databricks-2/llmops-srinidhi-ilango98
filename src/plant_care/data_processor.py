@@ -1,3 +1,5 @@
+"""Process saved PlantSolve article HTML into chunks for the plant care index."""
+
 from html.parser import HTMLParser
 
 from loguru import logger
@@ -80,20 +82,21 @@ def _join(*parts: str) -> str:
 
 
 class DataProcessor:
-    """
-    DataProcessor handles the processing workflow of:
+    """DataProcessor handles the processing workflow.
+
+    It performs these steps:
     - Reading saved article HTML from the Volume
     - Parsing each article into tagged text blocks
     - Chunking the blocks and joining plant metadata to each chunk
     """
 
     def __init__(self, spark: SparkSession, config: ProjectConfig) -> None:
-        """
-        Initialize DataProcessor with Spark session and configuration.
+        """Initialize DataProcessor with Spark session and configuration.
 
         Args:
             spark: SparkSession instance
             config: ProjectConfig object with catalog and schema
+
         """
         self.spark = spark
         self.cfg = config
@@ -103,14 +106,14 @@ class DataProcessor:
 
     @staticmethod
     def parse_html(html: str) -> list[tuple[str, str]]:
-        """
-        Parse article HTML into a list of (tag, text) blocks.
+        """Parse article HTML into a list of (tag, text) blocks.
 
         Args:
             html: Article HTML
 
         Returns:
             List of (tag, text) tuples in document order, such as ("h2", "Light") or ("p", "...")
+
         """
         parser = _ArticleParser()
         parser.feed(html)
@@ -122,14 +125,14 @@ class DataProcessor:
         logger.info(f"Saved to {table}")
 
     def parse_all_articles(self, save_table: bool = True) -> DataFrame:
-        """
-        Parse the saved article of every plant, optionally saving the result to the plant_care_parsed table.
+        """Parse the saved article of every plant, optionally saving the result to the plant_care_parsed table.
 
         Args:
             save_table: Whether to overwrite the plant_care_parsed table with the result
 
         Returns:
             DataFrame with slug, url, and blocks (array of tag and text)
+
         """
         rows = (
             self.spark.table(self.plant_table)
@@ -149,8 +152,7 @@ class DataProcessor:
 
     @staticmethod
     def chunk_blocks(slug: str, url: str, blocks: list[tuple[str, str]]) -> list[tuple[str, ...]]:
-        """
-        Turn one article's blocks into chunks, one per non-heading block.
+        """Turn one article's blocks into chunks, one per non-heading block.
 
         A heading merges into the body block after it, so the chunk starts with the heading.
         Consecutive li items in a section merge into one chunk joined with "; ", up to
@@ -168,6 +170,7 @@ class DataProcessor:
 
         Returns:
             List of (chunk_id, slug, url, section, text) tuples matching CHUNK_SCHEMA
+
         """
         chunks = []
         section = ""
@@ -204,8 +207,7 @@ class DataProcessor:
         return chunks
 
     def chunk_all_articles(self, save_table: bool = True) -> DataFrame:
-        """
-        Chunk every parsed article, optionally saving the result to the plant_care_chunks table.
+        """Chunk every parsed article, optionally saving the result to the plant_care_chunks table.
 
         Each chunk carries the plant_care metadata of its plant, except summary, volume_path and
         ingestion_timestamp. Summary would repeat on every chunk of the plant, and the other two
@@ -216,6 +218,7 @@ class DataProcessor:
 
         Returns:
             DataFrame with one row per chunk
+
         """
         rows = self.spark.table(self.parsed_table).select("slug", "url", "blocks").collect()
         chunks = [
